@@ -1,20 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
-import * as itemService from '../services/item.service';
-import { createItemSchema, updateItemSchema } from '../schemas/item.schema';
+import * as itemService from '../services/item.service.js';
+import { createItemSchema, updateItemSchema } from '../schemas/item.schema.js';
+import { AppError } from '../errors/AppError.js';
 
-export async function getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getAll(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const items = await itemService.getAll();
-    res.status(200).json(items);
+    const items = await itemService.findAll();
+    res.json({ data: items, total: items.length });
   } catch (err) {
     next(err);
   }
 }
 
-export async function getById(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getById(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
   try {
-    const item = await itemService.getById(req.params.id as string);
-    res.status(200).json(item);
+    const item = await itemService.findById(req.params.id);
+    if (!item) throw new AppError(404, 'Item not found');
+    res.json({ data: item });
   } catch (err) {
     next(err);
   }
@@ -22,29 +24,43 @@ export async function getById(req: Request, res: Response, next: NextFunction): 
 
 export async function create(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const dto = createItemSchema.parse(req.body);
-    const userId = req.user!.sub;
-    const item = await itemService.create(dto, userId);
-    res.status(201).json(item);
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+
+    const { body } = createItemSchema.parse({ body: req.body });
+    const item = await itemService.create(body, req.user.sub);
+    res.status(201).json({ message: 'Item created', data: item });
   } catch (err) {
     next(err);
   }
 }
 
-export async function update(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function update(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
   try {
-    const dto = updateItemSchema.parse(req.body);
-    const item = await itemService.update(req.params.id as string, dto);
-    res.status(200).json(item);
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+
+    const { body } = updateItemSchema.parse({ body: req.body });
+    const item = await itemService.update(
+      req.params.id,
+      body,
+      req.user.sub,
+      req.user.role as string
+    );
+
+    if (!item) throw new AppError(404, 'Item not found');
+    res.json({ message: 'Item updated', data: item });
   } catch (err) {
+    if (err instanceof Error && err.message === 'FORBIDDEN') {
+      return next(new AppError(403, 'You can only update your own resources'));
+    }
     next(err);
   }
 }
 
-export async function remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function remove(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
   try {
-    await itemService.remove(req.params.id as string);
-    res.status(204).send();
+    const item = await itemService.remove(req.params.id);
+    if (!item) throw new AppError(404, 'Item not found');
+    res.json({ message: 'Item deleted' });
   } catch (err) {
     next(err);
   }
